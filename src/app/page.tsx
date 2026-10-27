@@ -12,7 +12,7 @@ type Account = {
   name: string;
   handle: string;
   email: string;
-  verified: boolean;
+  badge: "none" | "member" | "professional" | "distinguished";
   staff: boolean;
   suspendedAt: string | null;
   joinedAt?: string;
@@ -36,6 +36,17 @@ type Report = {
   post: (DeskPost & { author: Account }) | null;
 };
 
+type Application = {
+  id: string;
+  title: string | null;
+  firm: string;
+  proofUrl: string;
+  note: string;
+  status: string;
+  createdAt: string;
+  account: Account;
+};
+
 type LogEvent = {
   id: string;
   action: string;
@@ -49,6 +60,11 @@ type LogEvent = {
 const ACTION_LABEL: Record<string, string> = {
   verify: "Verified",
   unverify: "Removed the badge",
+  grant_member: "Granted a member mark",
+  grant_professional: "Granted a professional badge",
+  grant_distinguished: "Granted a gold badge",
+  clear_badge: "Cleared the badge",
+  decline_application: "Declined a badge application",
   remove_post: "Removed a post",
   restore_post: "Restored a post",
   suspend: "Took an account down",
@@ -79,7 +95,9 @@ function when(iso: string) {
 function Badges({ account }: { account: Account }) {
   return (
     <div className="badges">
-      {account.verified && <span className="badge on">Verified</span>}
+      {account.badge === "member" && <span className="badge member">Member</span>}
+      {account.badge === "professional" && <span className="badge professional">Professional</span>}
+      {account.badge === "distinguished" && <span className="badge distinguished">Distinguished</span>}
       {account.staff && <span className="badge on">Staff</span>}
       {account.suspendedAt && <span className="badge">Taken down</span>}
     </div>
@@ -92,8 +110,9 @@ export default function DeskPage() {
   const [me, setMe] = useState<Account | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [tab, setTab] = useState<"queue" | "accounts" | "log">("queue");
+  const [tab, setTab] = useState<"queue" | "applications" | "accounts" | "log">("queue");
   const [reports, setReports] = useState<Report[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
   const [reportId, setReportId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -130,6 +149,11 @@ export default function DeskPage() {
     setEvents(data.events);
   }, []);
 
+  const loadApplications = useCallback(async (active: string) => {
+    const data = await desk<{ applications: Application[] }>("/admin/applications", active);
+    setApplications(data.applications);
+  }, []);
+
   const openAccount = useCallback(async (active: string, id: string) => {
     const data = await desk<{ account: Account; posts: DeskPost[] }>(`/admin/accounts/${encodeURIComponent(id)}`, active);
     setAccount(data.account);
@@ -141,8 +165,9 @@ export default function DeskPage() {
     if (!token) return;
     const active = token;
     if (tab === "queue") void loadReports(active).catch((err) => setError(err instanceof Error ? err.message : "Failed to load reports"));
+    if (tab === "applications") void loadApplications(active).catch((err) => setError(err instanceof Error ? err.message : "Failed to load applications"));
     if (tab === "log") void loadLog(active).catch((err) => setError(err instanceof Error ? err.message : "Failed to load the log"));
-  }, [token, tab, loadReports, loadLog]);
+  }, [token, tab, loadReports, loadApplications, loadLog]);
 
   async function signIn(event: FormEvent) {
     event.preventDefault();
@@ -191,6 +216,7 @@ export default function DeskPage() {
       const current = account?.id;
       await Promise.all([
         loadReports(token),
+        loadApplications(token),
         loadLog(token),
         current ? openAccount(token, current) : Promise.resolve(),
       ]);
@@ -265,7 +291,7 @@ export default function DeskPage() {
       </header>
 
       <div className="tabs" role="tablist" aria-label="Desk">
-        {(["queue", "accounts", "log"] as const).map((id) => (
+        {(["queue", "applications", "accounts", "log"] as const).map((id) => (
           <button
             key={id}
             type="button"
@@ -277,7 +303,7 @@ export default function DeskPage() {
               if (id !== "queue") setReportId(null);
             }}
           >
-            {id === "queue" ? "Queue" : id === "accounts" ? "Accounts" : "Log"}
+            {id === "queue" ? "Queue" : id === "applications" ? "Applications" : id === "accounts" ? "Accounts" : "Log"}
           </button>
         ))}
       </div>
@@ -321,6 +347,31 @@ export default function DeskPage() {
             {account && <AccountPanel me={me} account={account} posts={posts} busy={busy} note={note} setNote={setNote} run={run} />}
           </aside>
         </div>
+      )}
+
+      {tab === "applications" && (
+        <section className="stack" aria-label="Badge applications">
+          <label>
+            <span>Note for the log</span>
+            <textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={280} placeholder="Why you granted or declined it" />
+          </label>
+          {applications.length === 0 && <p className="meta">No applications in review.</p>}
+          {applications.map((item) => (
+            <article key={item.id} className="card stack">
+              <div>
+                <strong>{item.account.name}</strong>
+                <p className="meta">@{item.account.handle} · {item.title || "No title"} · {item.firm}</p>
+                <p>{item.note}</p>
+                <p className="meta"><a href={item.proofUrl}>{item.proofUrl}</a></p>
+              </div>
+              <div className="actions">
+                <button type="button" className="primary" disabled={busy} onClick={() => void run(`/admin/applications/${item.id}/decide`, { badge: "professional" })}>Grant green</button>
+                <button type="button" disabled={busy} onClick={() => void run(`/admin/applications/${item.id}/decide`, { badge: "distinguished" })}>Grant gold</button>
+                <button type="button" disabled={busy} onClick={() => void run(`/admin/applications/${item.id}/decide`, { badge: null })}>Decline</button>
+              </div>
+            </article>
+          ))}
+        </section>
       )}
 
       {tab === "accounts" && (
@@ -406,11 +457,18 @@ function AccountPanel({
         <textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={280} placeholder="Why this action" />
       </label>
       <div className="actions">
-        {account.verified ? (
-          <button type="button" disabled={busy} onClick={() => void run(`/admin/accounts/${account.id}/unverify`)}>Remove badge</button>
-        ) : (
-          <button type="button" className="primary" disabled={busy} onClick={() => void run(`/admin/accounts/${account.id}/verify`)}>Verify</button>
-        )}
+        {(["member", "professional", "distinguished"] as const).map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            className={account.badge === kind ? "primary" : undefined}
+            disabled={busy || account.badge === kind}
+            onClick={() => void run(`/admin/accounts/${account.id}/badge`, { badge: kind })}
+          >
+            {kind === "member" ? "Blue member" : kind === "professional" ? "Green professional" : "Gold"}
+          </button>
+        ))}
+        <button type="button" disabled={busy || account.badge === "none"} onClick={() => void run(`/admin/accounts/${account.id}/badge`, { badge: "none" })}>Clear badge</button>
         {account.suspendedAt ? (
           <button type="button" disabled={busy} onClick={() => void run(`/admin/accounts/${account.id}/restore`)}>Restore account</button>
         ) : (

@@ -96,7 +96,9 @@ header.top p { margin: 0.15rem 0 0; color: var(--muted); font-size: 12px; }
   border-radius: 999px;
   padding: 0.1rem 0.45rem;
 }
-.badge.on { background: var(--paper); }
+.badge.member { background: oklch(0.92 0.04 230); }
+.badge.professional { background: oklch(0.92 0.06 150); }
+.badge.distinguished { background: oklch(0.92 0.08 85); }
 
 .error {
   color: var(--danger);
