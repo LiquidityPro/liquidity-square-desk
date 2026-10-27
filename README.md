@@ -15,4 +15,4 @@ Open http://localhost:3001 and sign in with a staff account.
 
 ## Production
 
-The production build calls `https://thesquare.ng/api/server`. On the Square backend, set `ADMIN_URL` to this site's public origin so the browser is allowed to call the API.
+The production build calls `https://thesquare.ng/api/server` and is served at `/desk`. Square rewrites `https://thesquare.ng/desk` to this deployment. On the Square backend, set `ADMIN_URL` to `https://liquidity-square-desk.vercel.app` as well if people open that host directly.
