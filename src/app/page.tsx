@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { DeskAnalytics, type DeskAnalyticsData, getBaselineAnalytics } from "./DeskAnalytics";
 
 const TOKEN_KEY = "lq-desk-token";
 
@@ -110,7 +111,9 @@ export default function DeskPage() {
   const [me, setMe] = useState<Account | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [tab, setTab] = useState<"queue" | "applications" | "accounts" | "log">("queue");
+  const [tab, setTab] = useState<"queue" | "applications" | "accounts" | "log" | "analytics">("queue");
+  const [analytics, setAnalytics] = useState<DeskAnalyticsData | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [reports, setReports] = useState<Report[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [reportId, setReportId] = useState<string | null>(null);
@@ -161,13 +164,26 @@ export default function DeskPage() {
     setAccounts((prev) => prev.map((item) => (item.id === data.account.id ? { ...item, ...data.account } : item)));
   }, []);
 
+  const loadAnalytics = useCallback(async (active: string) => {
+    setAnalyticsLoading(true);
+    try {
+      const data = await desk<{ analytics: DeskAnalyticsData }>("/admin/analytics", active);
+      setAnalytics({ ...data.analytics, source: "live" });
+    } catch {
+      setAnalytics(getBaselineAnalytics(reports.length, applications.length, accounts.length));
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, [reports.length, applications.length, accounts.length]);
+
   useEffect(() => {
     if (!token) return;
     const active = token;
     if (tab === "queue") void loadReports(active).catch((err) => setError(err instanceof Error ? err.message : "Failed to load reports"));
     if (tab === "applications") void loadApplications(active).catch((err) => setError(err instanceof Error ? err.message : "Failed to load applications"));
     if (tab === "log") void loadLog(active).catch((err) => setError(err instanceof Error ? err.message : "Failed to load the log"));
-  }, [token, tab, loadReports, loadApplications, loadLog]);
+    if (tab === "analytics") void loadAnalytics(active);
+  }, [token, tab, loadReports, loadApplications, loadLog, loadAnalytics]);
 
   async function signIn(event: FormEvent) {
     event.preventDefault();
@@ -239,7 +255,9 @@ export default function DeskPage() {
     const timer = window.setTimeout(() => {
       desk<{ accounts: Account[] }>(`/admin/accounts?q=${encodeURIComponent(q)}`, active)
         .then((data) => {
-          if (epoch === searchEpoch.current) setAccounts(data.accounts);
+          if (epoch !== searchEpoch.current) return;
+          setAccounts(data.accounts);
+          setError("");
         })
         .catch((err) => {
           if (epoch === searchEpoch.current) setError(err instanceof Error ? err.message : "Search failed");
@@ -291,7 +309,7 @@ export default function DeskPage() {
       </header>
 
       <div className="tabs" role="tablist" aria-label="Desk">
-        {(["queue", "applications", "accounts", "log"] as const).map((id) => (
+        {(["queue", "applications", "accounts", "log", "analytics"] as const).map((id) => (
           <button
             key={id}
             type="button"
@@ -303,7 +321,7 @@ export default function DeskPage() {
               if (id !== "queue") setReportId(null);
             }}
           >
-            {id === "queue" ? "Queue" : id === "applications" ? "Applications" : id === "accounts" ? "Accounts" : "Log"}
+            {id === "queue" ? "Queue" : id === "applications" ? "Applications" : id === "accounts" ? "Accounts" : id === "log" ? "Log" : "Analytics"}
           </button>
         ))}
       </div>
@@ -392,7 +410,10 @@ export default function DeskPage() {
                   type="button"
                   className="card row"
                   aria-current={account?.id === item.id ? "true" : undefined}
-                  onClick={() => token && void openAccount(token, item.id)}
+                  onClick={() => {
+                    if (!token || !item.id) return;
+                    void openAccount(token, item.id).catch((err) => setError(err instanceof Error ? err.message : "Failed to open the account"));
+                  }}
                 >
                   <strong>{item.name}</strong>
                   <p className="meta">@{item.handle} · {item.email}</p>
@@ -422,6 +443,16 @@ export default function DeskPage() {
             </article>
           ))}
         </section>
+      )}
+
+      {tab === "analytics" && (
+        <DeskAnalytics
+          data={analytics ?? getBaselineAnalytics(reports.length, applications.length, accounts.length)}
+          onRefresh={() => {
+            if (token) void loadAnalytics(token);
+          }}
+          loading={analyticsLoading}
+        />
       )}
     </main>
   );
